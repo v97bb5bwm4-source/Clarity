@@ -275,11 +275,17 @@ function calculateProduct(product) {
   const shippingCost = parseMoney(product.shippingCost);
   const adSpend = parseMoney(product.adSpend);
   const unitsSold = Number(product.unitsSold) || 0;
+  const costPerUnit = productCost + shippingCost + adSpend;
+  const unitProfit = sellingPrice - costPerUnit;
   const revenue = sellingPrice * unitsSold;
-  const trueProfit = (sellingPrice - productCost - shippingCost - adSpend) * unitsSold;
+  const totalCosts = costPerUnit * unitsSold;
+  const trueProfit = unitProfit * unitsSold;
   const margin = revenue > 0 ? Math.round((trueProfit / revenue) * 100) : 0;
+  const adSpendRatio = sellingPrice > 0 ? Math.round((adSpend / sellingPrice) * 100) : 0;
+  const shippingRatio = sellingPrice > 0 ? Math.round((shippingCost / sellingPrice) * 100) : 0;
+  const costRatio = sellingPrice > 0 ? Math.round((costPerUnit / sellingPrice) * 100) : 0;
 
-  return { revenue, trueProfit, margin };
+  return { revenue, trueProfit, margin, unitProfit, totalCosts, costPerUnit, adSpendRatio, shippingRatio, costRatio };
 }
 
 function getStoreInitials(storeName) {
@@ -338,6 +344,12 @@ function App() {
       revenueValue: totals.revenue,
       trueProfitValue: totals.trueProfit,
       marginValue: totals.margin,
+      unitProfitValue: totals.unitProfit,
+      totalCostsValue: totals.totalCosts,
+      costPerUnitValue: totals.costPerUnit,
+      adSpendRatioValue: totals.adSpendRatio,
+      shippingRatioValue: totals.shippingRatio,
+      costRatioValue: totals.costRatio,
     };
   });
 
@@ -350,11 +362,11 @@ function App() {
 
   const filteredProductRows = products.filter((product) => {
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const { margin } = calculateProduct(product);
+    const { trueProfit } = calculateProduct(product);
     const matchesProfitFilter =
       productProfitFilter === "All products" ||
-      (productProfitFilter === "Profitable" && margin >= 0) ||
-      (productProfitFilter === "Losing money" && margin < 0);
+      (productProfitFilter === "Profitable" && trueProfit >= 0) ||
+      (productProfitFilter === "Losing money" && trueProfit < 0);
 
     return matchesSearch && matchesProfitFilter;
   });
@@ -569,6 +581,19 @@ function App() {
       count: productsLosingMoney.length,
     },
   ];
+  const importPreviewSummary = csvImportRows.reduce(
+    (summary, product) => {
+      const totals = calculateProduct(product);
+
+      return {
+        revenue: summary.revenue + totals.revenue,
+        profit: summary.profit + totals.trueProfit,
+        units: summary.units + (Number(product.unitsSold) || 0),
+      };
+    },
+    { revenue: 0, profit: 0, units: 0 },
+  );
+  const productsAtRisk = totalLossAnalysisWarnings;
   const dashboardMetrics = [
     {
       label: "Total Revenue",
@@ -2000,7 +2025,10 @@ function App() {
           ) : dashboardTopProducts.length > 0 ? (
             dashboardTopProducts.map((product) => (
               <div className="table-row" role="row" key={product.id}>
-                <strong role="cell">{product.name}</strong>
+                <strong role="cell">
+                  {product.name}
+                  <span>{product.unitsSold} units · {formatCurrency(product.unitProfitValue)} / unit</span>
+                </strong>
                 <span role="cell">{formatCurrency(product.revenueValue)}</span>
                 <span role="cell">{formatCurrency(product.trueProfitValue)}</span>
                 <span role="cell">{product.marginValue}%</span>
@@ -2061,18 +2089,19 @@ function App() {
             <span role="columnheader">Revenue</span>
             <span role="columnheader">True profit</span>
             <span role="columnheader">Profit margin</span>
+            <span role="columnheader">Cost pressure</span>
             <span role="columnheader">Actions</span>
           </div>
 
           {filteredProductRows.length > 0 ? (
             filteredProductRows.map((product) => {
-              const { revenue, trueProfit, margin } = calculateProduct(product);
+              const { revenue, trueProfit, margin, unitProfit, adSpendRatio, shippingRatio } = calculateProduct(product);
 
               return (
                 <div className="product-profit-row" role="row" key={product.id}>
                   <strong role="cell">
                     {product.name}
-                    <span>{product.category}</span>
+                    <span>{product.category} · {formatCurrency(unitProfit)} / unit</span>
                   </strong>
                   <span role="cell">{formatCurrency(parseMoney(product.sellingPrice))}</span>
                   <span role="cell">{formatCurrency(parseMoney(product.productCost))}</span>
@@ -2085,6 +2114,9 @@ function App() {
                   </em>
                   <span className={`margin-pill ${margin < 0 ? "danger" : ""}`} role="cell">
                     {margin}%
+                  </span>
+                  <span className="row-detail" role="cell">
+                    Ads {adSpendRatio}% · Ship {shippingRatio}%
                   </span>
                   <div className="table-actions" role="cell">
                     <button type="button" onClick={() => openEditProductModal(product)}>Edit</button>
@@ -2129,6 +2161,7 @@ function App() {
                 placeholder="e.g. Heatless Curling Rod Set"
               />
               {productErrors.name && <em>{productErrors.name}</em>}
+              <small className="form-helper">Costs and ad spend are treated per unit. Revenue and profit multiply by units sold.</small>
             </label>
 
             <div className="form-grid">
@@ -2200,6 +2233,12 @@ function App() {
                 <strong>{formatCurrency(preview.revenue)}</strong>
               </div>
               <div>
+                <span>Unit profit</span>
+                <strong className={preview.unitProfit < 0 ? "negative-profit" : ""}>
+                  {formatCurrency(preview.unitProfit)}
+                </strong>
+              </div>
+              <div>
                 <span>True profit</span>
                 <strong className={preview.trueProfit < 0 ? "negative-profit" : ""}>
                   {formatCurrency(preview.trueProfit)}
@@ -2207,7 +2246,7 @@ function App() {
               </div>
               <div>
                 <span>Profit margin</span>
-                <strong>{preview.margin}%</strong>
+                <strong className={preview.margin < 0 ? "negative-profit" : ""}>{preview.margin}%</strong>
               </div>
             </div>
 
@@ -2243,6 +2282,26 @@ function App() {
 
             {csvImportRows.length > 0 && (
               <>
+                <div className="csv-summary-grid" aria-label="CSV import summary">
+                  <div>
+                    <span>Rows ready</span>
+                    <strong>{csvImportRows.length}</strong>
+                  </div>
+                  <div>
+                    <span>Units</span>
+                    <strong>{importPreviewSummary.units}</strong>
+                  </div>
+                  <div>
+                    <span>Est. revenue</span>
+                    <strong>{formatCurrency(importPreviewSummary.revenue)}</strong>
+                  </div>
+                  <div>
+                    <span>Est. profit</span>
+                    <strong className={importPreviewSummary.profit < 0 ? "negative-profit" : ""}>
+                      {formatCurrency(importPreviewSummary.profit)}
+                    </strong>
+                  </div>
+                </div>
                 <div className="csv-preview-table" role="table" aria-label="CSV product preview">
                   <div className="csv-preview-row csv-preview-head" role="row">
                     <span role="columnheader">Product</span>
@@ -2270,6 +2329,9 @@ function App() {
                     Showing first {previewRows.length} of {csvImportRows.length} rows.
                   </p>
                 )}
+                <p className="csv-preview-note">
+                  Expected columns: product name, selling price, product cost, shipping cost, ad spend, units sold.
+                </p>
               </>
             )}
 
@@ -2557,6 +2619,24 @@ function App() {
             <span>Email</span>
             <strong>{user?.email ?? "No email available"}</strong>
           </div>
+          <div className="settings-health-grid" aria-label="Workspace data status">
+            <div>
+              <span>Products</span>
+              <strong>{products.length}</strong>
+            </div>
+            <div>
+              <span>Expenses</span>
+              <strong>{expenseItems.length}</strong>
+            </div>
+            <div>
+              <span>Currency</span>
+              <strong>{activeCurrency}</strong>
+            </div>
+            <div>
+              <span>Risk flags</span>
+              <strong>{productsAtRisk}</strong>
+            </div>
+          </div>
           <button className="logout-button settings-logout" type="button" onClick={signOut}>
             Log out
           </button>
@@ -2604,13 +2684,14 @@ function App() {
         </div>
         <h2>Protect margin before scaling ads</h2>
         <p>
-          Your dashboard is now using stored products and expenses. Net profit is
-          {` ${formatCurrency(totalTrueNetProfit)} `}after {formatCurrency(totalMonthlyExpenses)} in tracked expenses.
+          True net profit is {formatCurrency(totalTrueNetProfit)} after {formatCurrency(totalMonthlyExpenses)} in tracked expenses.
+          Ads are {adSpendShare}% of revenue and shipping is {shippingShare}%.
         </p>
         <ul className="ai-actions">
-          <li>{bestProduct ? `Best product: ${bestProduct.name} at ${formatCurrency(bestProduct.trueProfitValue)} true profit.` : "Add products to find your best performer."}</li>
-          <li>{worstProduct ? `Worst product: ${worstProduct.name} at ${formatCurrency(worstProduct.trueProfitValue)} true profit.` : "No worst product yet."}</li>
-          <li>{productsLosingMoney.length > 0 ? `Review ${productsLosingMoney.length} product${productsLosingMoney.length === 1 ? "" : "s"} losing money before scaling ads.` : "No stored products are currently losing money."}</li>
+          <li>{bestProduct ? `${bestProduct.name} is strongest at ${formatCurrency(bestProduct.trueProfitValue)} true profit and ${bestProduct.marginValue}% margin.` : "Add products to find the SKU carrying profit."}</li>
+          <li>{worstProduct ? `${worstProduct.name} needs review: ${formatCurrency(worstProduct.unitProfitValue)} unit profit, ${worstProduct.adSpendRatioValue}% ad share.` : "No weak product signal yet."}</li>
+          <li>{productsLosingMoney.length > 0 ? `Review ${productsLosingMoney.length} losing product${productsLosingMoney.length === 1 ? "" : "s"} before increasing spend.` : "No stored products are currently below zero true profit."}</li>
+          <li>Estimated next payout: {formatCurrency(estimatedNextPayout)} after reserve for fees, refunds, and timing differences.</li>
         </ul>
       </article>
     );
