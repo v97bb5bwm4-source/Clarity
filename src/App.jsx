@@ -3,7 +3,8 @@ import { useAuth } from "./auth/AuthContext";
 import { supabase } from "./lib/supabaseClient";
 
 const expenseCategories = ["Ads", "Shipping", "Software", "Samples", "Packaging", "Returns", "Other"];
-const productSelectColumns = "id, name, category, status, selling_price, product_cost, shipping_cost, ad_spend, units_sold";
+const productSelectColumns = "id, name, category, status, selling_price, product_cost, shipping_cost, ad_spend, units_sold, created_at";
+const expenseSelectColumns = "id, name, category, amount, date_label, notes, created_at";
 const productCsvFieldMap = {
   name: ["product name", "product", "name", "product_name", "item", "item name"],
   sellingPrice: ["selling price", "selling_price", "price", "sale price", "retail price"],
@@ -20,25 +21,6 @@ const productCsvFieldLabels = {
   adSpend: "ad spend",
   unitsSold: "units sold",
 };
-
-const quickActions = [
-  "Import TikTok orders",
-  "Add supplier invoice",
-  "Sync TikTok ads",
-  "Export profit report",
-];
-
-const notifications = [
-  "18 orders are missing supplier cost",
-  "TikTok ads synced 9 minutes ago",
-  "Acrylic Beauty Organiser dropped below 0% margin",
-];
-
-const storeStats = [
-  { label: "Store", value: "GlowHaus UK" },
-  { label: "Orders", value: "1,284 synced" },
-  { label: "Last sync", value: "9 min ago" },
-];
 
 const emptyProductForm = {
   name: "",
@@ -95,6 +77,84 @@ function getInitialPage() {
 
 function parseMoney(value) {
   return Number(String(value).replace(/[^\d.-]/g, "")) || 0;
+}
+
+function startOfDay(date) {
+  const nextDate = new Date(date);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+}
+
+function getTimeframeStart(range) {
+  const now = new Date();
+
+  if (range === "Today") {
+    return startOfDay(now);
+  }
+
+  if (range === "This Week") {
+    const weekStart = startOfDay(now);
+    const dayOfWeek = weekStart.getDay();
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    weekStart.setDate(weekStart.getDate() - daysFromMonday);
+    return weekStart;
+  }
+
+  if (range === "This Month") {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  return null;
+}
+
+function isWithinTimeframe(createdAt, range) {
+  const startDate = getTimeframeStart(range);
+
+  if (!startDate) {
+    return true;
+  }
+
+  const createdDate = new Date(createdAt);
+  return !Number.isNaN(createdDate.getTime()) && createdDate >= startDate;
+}
+
+function formatDateLabel(date) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
+}
+
+function getTrendBuckets(range) {
+  const now = new Date();
+
+  if (range === "Today") {
+    const dayStart = startOfDay(now);
+    return Array.from({ length: 6 }, (_, index) => {
+      const start = new Date(dayStart);
+      start.setHours(index * 4, 0, 0, 0);
+      const end = new Date(dayStart);
+      end.setHours((index + 1) * 4, 0, 0, 0);
+      return { label: `${String(start.getHours()).padStart(2, "0")}:00`, start, end };
+    });
+  }
+
+  if (range === "This Month") {
+    const monthStart = getTimeframeStart(range);
+    return Array.from({ length: 5 }, (_, index) => {
+      const start = new Date(monthStart);
+      start.setDate(monthStart.getDate() + index * 7);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 7);
+      return { label: formatDateLabel(start), start, end };
+    });
+  }
+
+  const weekStart = getTimeframeStart("This Week");
+  return Array.from({ length: 7 }, (_, index) => {
+    const start = new Date(weekStart);
+    start.setDate(weekStart.getDate() + index);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 1);
+    return { label: start.toLocaleDateString("en", { weekday: "short" }), start, end };
+  });
 }
 
 function parseCsvNumber(value) {
@@ -255,6 +315,7 @@ function toProduct(row) {
     shippingCost: Number(row.shipping_cost),
     adSpend: Number(row.ad_spend),
     unitsSold: Number(row.units_sold) || 0,
+    createdAt: row.created_at,
   };
 }
 
@@ -266,6 +327,7 @@ function toExpense(row) {
     amount: Number(row.amount),
     date: row.date_label,
     notes: row.notes || "",
+    createdAt: row.created_at,
   };
 }
 
@@ -305,7 +367,6 @@ function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activePage, setActivePage] = useState(getInitialPage);
   const [selectedRange, setSelectedRange] = useState("This Month");
-  const [analyticsRange, setAnalyticsRange] = useState("This Month");
   const [searchTerm, setSearchTerm] = useState("");
   const [productProfitFilter, setProductProfitFilter] = useState("All products");
   const [products, setProducts] = useState([]);
@@ -336,7 +397,16 @@ function App() {
   const activeCurrency = storeProfile?.currency ?? defaultStoreProfile.currency;
   const formatCurrency = (value) => formatCurrencyValue(value, activeCurrency);
 
-  const productSummaries = products.map((product) => {
+  const productsInSelectedRange = products.filter((product) =>
+    isWithinTimeframe(product.createdAt, selectedRange),
+  );
+  const expensesInSelectedRange = expenseItems.filter((expense) =>
+    isWithinTimeframe(expense.createdAt, selectedRange),
+  );
+  const hasDashboardData = productsInSelectedRange.length > 0 || expensesInSelectedRange.length > 0;
+  const rangeLabel = selectedRange.toLowerCase();
+
+  const productSummaries = productsInSelectedRange.map((product) => {
     const totals = calculateProduct(product);
 
     return {
@@ -371,7 +441,7 @@ function App() {
     return matchesSearch && matchesProfitFilter;
   });
 
-  const totalMonthlyExpenses = expenseItems.reduce(
+  const totalMonthlyExpenses = expensesInSelectedRange.reduce(
     (total, expense) => total + parseMoney(expense.amount),
     0,
   );
@@ -381,7 +451,7 @@ function App() {
 
   const expenseCategoryTotals = expenseCategories.map((category) => ({
     category,
-    total: expenseItems
+    total: expensesInSelectedRange
       .filter((expense) => expense.category === category)
       .reduce((sum, expense) => sum + parseMoney(expense.amount), 0),
   }));
@@ -433,7 +503,7 @@ function App() {
       hasHighAdSpend,
       hasShrinkingMarginRisk,
       warningLevel: isLosingMoney ? "Critical" : hasHighAdSpend || hasLowMargin ? "Warning" : "Watch",
-      recommendations: recommendations.length > 0 ? recommendations : ["Monitor before scaling"],
+      recommendations: recommendations.length > 0 ? recommendations : ["Review costs"],
     };
   });
   const lossAnalysisGroups = {
@@ -453,43 +523,6 @@ function App() {
   const totalLossAnalysisWarnings = new Set(
     Object.values(lossAnalysisGroups).flat().map((product) => product.id),
   ).size;
-  const dashboardTopProducts = [...productSummaries]
-    .sort((a, b) => b.trueProfitValue - a.trueProfitValue)
-    .slice(0, 6);
-  const chartProducts = [...productSummaries]
-    .sort((a, b) => Math.abs(b.trueProfitValue) - Math.abs(a.trueProfitValue))
-    .slice(0, 7);
-  const chartMaxProfit = Math.max(
-    ...chartProducts.map((product) => Math.abs(product.trueProfitValue)),
-    1,
-  );
-  const productProfitTrend = chartProducts.map((product) => ({
-    day: product.name.split(" ").slice(0, 2).join(" "),
-    height: Math.max(10, Math.round((Math.abs(product.trueProfitValue) / chartMaxProfit) * 100)),
-    profit: formatCurrency(product.trueProfitValue),
-    isLoss: product.trueProfitValue < 0,
-  }));
-  const revenueExpenseMax = Math.max(totalRevenue, totalMonthlyExpenses, 1);
-  const revenueExpenseBars = [
-    {
-      label: "Revenue",
-      value: totalRevenue,
-      height: Math.max(8, Math.round((totalRevenue / revenueExpenseMax) * 100)),
-      tone: "revenue",
-    },
-    {
-      label: "Expenses",
-      value: totalMonthlyExpenses,
-      height: Math.max(8, Math.round((totalMonthlyExpenses / revenueExpenseMax) * 100)),
-      tone: "expense",
-    },
-    {
-      label: "Net profit",
-      value: totalTrueNetProfit,
-      height: Math.max(8, Math.round((Math.abs(totalTrueNetProfit) / revenueExpenseMax) * 100)),
-      tone: totalTrueNetProfit >= 0 ? "profit" : "loss",
-    },
-  ];
   const totalAdSpend = productSummaries.reduce(
     (total, product) => total + parseMoney(product.adSpend) * (Number(product.unitsSold) || 0),
     0,
@@ -500,67 +533,48 @@ function App() {
   );
   const adSpendShare = totalRevenue > 0 ? Math.round((totalAdSpend / totalRevenue) * 100) : 0;
   const shippingShare = totalRevenue > 0 ? Math.round((totalShippingCost / totalRevenue) * 100) : 0;
-  const estimatedPendingPayout = Math.max(0, totalRevenue - totalMonthlyExpenses - totalAdSpend);
-  const estimatedNextPayout = estimatedPendingPayout * 0.72;
-  const payoutReserve = estimatedPendingPayout - estimatedNextPayout;
-  const trendMultipliers = [0.82, 0.95, 1.08, 0.9, 1.18, 0.74, 1.03];
-  const trendLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const trendEvents = [
-    "Baseline orders",
-    "Creator post lift",
-    "Voucher push",
-    "Dispatch delay",
-    "Ad scale",
-    "Refund drag",
-    "Weekend recovery",
-  ];
-  const revenueTrendPoints = trendMultipliers.map((multiplier, index) => {
-    const revenue = Math.round((totalRevenue / 7) * multiplier);
-    const adPressure = index === 4 ? 1.42 : index === 5 ? 1.28 : index === 2 ? 1.12 : 0.96;
-    const adSpend = Math.round((totalAdSpend / 7) * adPressure);
-    const seasonalDrag = index === 5 ? 0.88 : index === 4 ? 0.94 : 1;
-    const profit = Math.round((productTrueProfit / 7) * multiplier * seasonalDrag - adSpend * 0.18);
+  const trendBuckets = getTrendBuckets(selectedRange);
+  const revenueTrendPoints = trendBuckets.map((bucket) => {
+    const bucketProducts = productSummaries.filter((product) => {
+      const createdDate = new Date(product.createdAt);
+      return createdDate >= bucket.start && createdDate < bucket.end;
+    });
+    const bucketExpenses = expensesInSelectedRange.filter((expense) => {
+      const createdDate = new Date(expense.createdAt);
+      return createdDate >= bucket.start && createdDate < bucket.end;
+    });
+    const revenue = bucketProducts.reduce((total, product) => total + product.revenueValue, 0);
+    const productProfit = bucketProducts.reduce((total, product) => total + product.trueProfitValue, 0);
+    const expenses = bucketExpenses.reduce((total, expense) => total + parseMoney(expense.amount), 0);
+    const profit = productProfit - expenses;
 
     return {
-      label: trendLabels[index],
-      event: trendEvents[index],
+      label: bucket.label,
       revenue,
       profit,
-      adSpend,
     };
   });
-  const maxTrendRevenue = Math.max(...revenueTrendPoints.map((point) => point.revenue), 1);
+  const maxTrendValue = Math.max(
+    ...revenueTrendPoints.flatMap((point) => [Math.abs(point.revenue), Math.abs(point.profit)]),
+    1,
+  );
   const revenueTrend = revenueTrendPoints.map((point) => ({
     ...point,
-    revenueHeight: Math.max(10, Math.round((point.revenue / maxTrendRevenue) * 100)),
-    profitHeight: Math.max(8, Math.round((Math.abs(point.profit) / maxTrendRevenue) * 100)),
-    isProfitDrop: point.profit < productTrueProfit / 7 * 0.75,
+    profitHeight: point.profit !== 0 ? Math.max(8, Math.round((Math.abs(point.profit) / maxTrendValue) * 100)) : 0,
+    isProfitDrop: point.profit < 0,
   }));
-  const biggestProfitDrop = [...revenueTrend].sort((a, b) => a.profit - b.profit)[0];
-  const seasonalSignal =
-    totalUnitsSold > 300
-      ? "Weekend demand is uneven; keep best sellers stocked before creator posts land."
-      : "Sales volume is still thin, so one refund or ad test can distort daily profit.";
-  const operationalWarnings = [
-    ...(adSpendShare >= 22
-      ? [`Ad spend is ${adSpendShare}% of revenue. Check Spark Ads before scaling new creatives.`]
-      : [`Ad spend is ${adSpendShare}% of revenue. Keep campaigns capped until conversion data is stable.`]),
-    ...(shippingShare >= 16
-      ? [`Shipping is ${shippingShare}% of revenue. Review label costs or bundle thresholds.`]
-      : [`Shipping is ${shippingShare}% of revenue. Current fulfilment cost looks controlled.`]),
-    ...(productsLosingMoney.length > 0
-      ? [`${productsLosingMoney.length} product${productsLosingMoney.length === 1 ? "" : "s"} lose money after ads and fulfilment.`]
-      : ["No products are currently below zero true profit."]),
-  ];
-  const sellerInsights = [
-    bestProduct
-      ? `${bestProduct.name} is carrying profit. Keep stock cover above one payout cycle before increasing ads.`
-      : "Add products to identify which SKU is carrying profit.",
-    biggestProfitDrop
-      ? `${biggestProfitDrop.label} shows the weakest profit pattern after ${biggestProfitDrop.event.toLowerCase()}.`
-      : "Import product data to build a daily operating pattern.",
-    `Estimated next payout is ${formatCurrency(estimatedNextPayout)}, with ${formatCurrency(payoutReserve)} held back for fees, refunds, and timing differences.`,
-  ];
+  const operationalWarnings = hasDashboardData
+    ? [
+        ...(adSpendShare >= 22 ? [`Ad spend is ${adSpendShare}% of revenue.`] : []),
+        ...(shippingShare >= 16 ? [`Shipping is ${shippingShare}% of revenue.`] : []),
+        ...(productsLosingMoney.length > 0
+          ? [`${productsLosingMoney.length} product${productsLosingMoney.length === 1 ? "" : "s"} losing money.`]
+          : []),
+        ...(averageProfitMargin > 0 && averageProfitMargin < 15 ? [`Profit margin is below 15%.`] : []),
+        ...(totalTrueNetProfit < 0 ? [`Net profit is negative.`] : []),
+      ]
+    : [];
+  const dashboardAlerts = operationalWarnings.slice(0, 4);
   const rankedProducts = [...productSummaries].sort(
     (a, b) => b.trueProfitValue - a.trueProfitValue,
   );
@@ -596,120 +610,36 @@ function App() {
   const productsAtRisk = totalLossAnalysisWarnings;
   const dashboardMetrics = [
     {
-      label: "Total Revenue",
+      label: "Net Profit",
+      value: formatCurrency(totalTrueNetProfit),
+      change: `${averageProfitMargin}% margin`,
+      tone: totalTrueNetProfit >= 0 ? "profit" : "neutral",
+    },
+    {
+      label: "Revenue",
       value: formatCurrency(totalRevenue),
       change: `${totalUnitsSold} units`,
       tone: "positive",
-      detail: "Calculated from product selling price and units sold",
-      meta: bestProduct ? `Best seller: ${bestProduct.name}` : "No products yet",
-      breakdown: [
-        `${products.length} products tracked`,
-        `Average order value ${formatCurrency(totalUnitsSold ? totalRevenue / totalUnitsSold : 0)}`,
-      ],
     },
     {
-      label: "Total Expenses",
+      label: "Expenses",
       value: formatCurrency(totalMonthlyExpenses),
-      change: `${expenseItems.length} entries`,
+      change: `${expensesInSelectedRange.length} entries`,
       tone: "neutral",
-      detail: "Tracked from the Expenses page",
-      meta: "Saved in Supabase",
-      breakdown: expenseCategoryTotals
-        .filter((expense) => expense.total > 0)
-        .slice(0, 2)
-        .map((expense) => `${expense.category}: ${formatCurrency(expense.total)}`),
     },
     {
-      label: "True Net Profit",
-      value: formatCurrency(totalTrueNetProfit),
-      change: `${averageProfitMargin}% margin`,
-      tone: "profit",
-      detail: "Product profit after tracked expenses",
-      meta: worstProduct ? `Worst: ${worstProduct.name}` : "No products yet",
-      breakdown: [
-        `Product profit ${formatCurrency(productTrueProfit)}`,
-        `${productsLosingMoney.length} products losing money`,
-      ],
-    },
-    {
-      label: "Avg Profit Margin",
+      label: "Profit Margin",
       value: `${averageProfitMargin}%`,
-      change: bestProduct ? `${bestProduct.marginValue}% best` : "0%",
+      change: totalRevenue > 0 ? "of revenue" : "no revenue",
       tone: "positive",
-      detail: "True net profit divided by total revenue",
-      meta: bestProduct ? bestProduct.name : "No products yet",
-      breakdown: [
-        `Best product ${bestProduct ? bestProduct.name : "None"}`,
-        `Worst product ${worstProduct ? worstProduct.name : "None"}`,
-      ],
     },
     {
       label: "Units Sold",
       value: String(totalUnitsSold),
-      change: `${products.length} SKUs`,
+      change: `${productsInSelectedRange.length} SKUs`,
       tone: "neutral",
-      detail: "Total units sold from stored product data",
-      meta: bestProduct ? `${bestProduct.unitsSold} units top SKU` : "No units yet",
-      breakdown: [
-        `Revenue per unit ${formatCurrency(totalUnitsSold ? totalRevenue / totalUnitsSold : 0)}`,
-        `Expenses per unit ${formatCurrency(totalUnitsSold ? totalMonthlyExpenses / totalUnitsSold : 0)}`,
-      ],
     },
   ];
-  const analyticsFromData = [
-    {
-      label: "Average order value",
-      value: formatCurrency(totalUnitsSold ? totalRevenue / totalUnitsSold : 0),
-      detail: `${totalUnitsSold} units sold across ${products.length} products`,
-    },
-    {
-      label: "Average profit margin",
-      value: `${averageProfitMargin}%`,
-      detail: "After stored expenses",
-    },
-    {
-      label: "Next payout estimate",
-      value: formatCurrency(estimatedNextPayout),
-      detail: "Approximate settlement after ads, expenses, and timing reserve",
-    },
-    {
-      label: "Best product",
-      value: bestProduct ? bestProduct.name : "No products",
-      detail: bestProduct ? `${formatCurrency(bestProduct.trueProfitValue)} true profit` : "Add a product to start",
-    },
-    {
-      label: "Worst product",
-      value: worstProduct ? worstProduct.name : "No products",
-      detail: worstProduct ? `${formatCurrency(worstProduct.trueProfitValue)} true profit` : "Add a product to start",
-    },
-  ];
-  const recentActivityFromData = [
-    {
-      title: "Dashboard recalculated",
-      detail: `${products.length} products and ${expenseItems.length} expenses included`,
-      time: "Now",
-    },
-    {
-      title: "Best performing product",
-      detail: bestProduct
-        ? `${bestProduct.name} generated ${formatCurrency(bestProduct.trueProfitValue)} true profit`
-        : "Add products to find your best performer",
-      time: "Live",
-    },
-    {
-      title: "Worst performing product",
-      detail: worstProduct
-        ? `${worstProduct.name} is at ${formatCurrency(worstProduct.trueProfitValue)} true profit`
-        : "No product data yet",
-      time: "Live",
-    },
-    {
-      title: "Expense tracker synced",
-      detail: `${formatCurrency(totalMonthlyExpenses)} in monthly expenses loaded from Supabase`,
-      time: "Live",
-    },
-  ];
-
   useEffect(() => {
     const handleHashChange = () => setActivePage(getInitialPage());
     window.addEventListener("hashchange", handleHashChange);
@@ -749,7 +679,7 @@ function App() {
           .order("created_at", { ascending: false }),
         supabase
           .from("expenses")
-          .select("id, name, category, amount, date_label, notes")
+          .select(expenseSelectColumns)
           .eq("user_id", user.id)
           .order("created_at", { ascending: false }),
       ]);
@@ -858,9 +788,34 @@ function App() {
     saveSettings();
   };
 
-  const handleSync = () => {
+  const handleSync = async () => {
     setIsLoading(true);
-    window.setTimeout(() => setIsLoading(false), 900);
+    setDataError("");
+
+    const [productsResult, expensesResult] = await Promise.all([
+      supabase
+        .from("products")
+        .select(productSelectColumns)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("expenses")
+        .select(expenseSelectColumns)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    ]);
+    const error = productsResult.error || expensesResult.error;
+
+    if (error) {
+      setDataError(error.message);
+      showErrorToast(error.message);
+    } else {
+      setProducts((productsResult.data || []).map(toProduct));
+      setExpenseItems((expensesResult.data || []).map(toExpense));
+      showSuccessToast("Dashboard data refreshed.");
+    }
+
+    setIsLoading(false);
   };
 
   const openAddProductModal = () => {
@@ -1206,7 +1161,7 @@ function App() {
         .update(expensePayload)
         .eq("id", editingExpenseId)
         .eq("user_id", user.id)
-        .select("id, name, category, amount, date_label, notes")
+        .select(expenseSelectColumns)
         .single();
 
       if (error) {
@@ -1225,7 +1180,7 @@ function App() {
       const { data, error } = await supabase
         .from("expenses")
         .insert(expensePayload)
-        .select("id, name, category, amount, date_label, notes")
+        .select(expenseSelectColumns)
         .single();
 
       if (error) {
@@ -1385,17 +1340,19 @@ function App() {
             </div>
           </div>
           <div className="store-stats">
-            {storeStats.slice(1).map((stat) => (
-              <p key={stat.label}>
-                <span>{stat.label}</span>
-                <strong>{stat.label === "Orders" ? `${totalUnitsSold} units` : stat.value}</strong>
-              </p>
-            ))}
+            <p>
+              <span>{selectedRange}</span>
+              <strong>{totalUnitsSold} units</strong>
+            </p>
+            <p>
+              <span>Net profit</span>
+              <strong>{formatCurrency(totalTrueNetProfit)}</strong>
+            </p>
           </div>
-          <span>Monthly target</span>
-          <strong>68%</strong>
+          <span>Profit margin</span>
+          <strong>{averageProfitMargin}%</strong>
           <div className="progress-track">
-            <span />
+            <span style={{ width: `${Math.max(0, Math.min(100, averageProfitMargin))}%` }} />
           </div>
           <button className="logout-button" type="button" onClick={signOut}>
             Log out
@@ -1513,16 +1470,15 @@ function App() {
   function renderDashboardPage() {
     return (
       <>
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Dashboard</p>
-            <h1>True profit tracking for TikTok Shop sellers</h1>
-          </div>
-          <div className="topbar-actions">
-            <Notifications />
-            <button className="secondary-action" type="button" onClick={openAddProductModal}>Add Product</button>
-            <button className="secondary-action" type="button" onClick={openCsvFilePicker}>Upload CSV</button>
-            <button className="primary-action" type="button" onClick={handleSync}>
+	        <header className="topbar">
+	          <div>
+	            <p className="eyebrow">Dashboard</p>
+	            <h1>Profit overview</h1>
+	          </div>
+	          <div className="topbar-actions">
+	            <button className="secondary-action" type="button" onClick={openAddProductModal}>Add Product</button>
+	            <button className="secondary-action" type="button" onClick={openCsvFilePicker}>Upload CSV</button>
+	            <button className="primary-action" type="button" onClick={handleSync}>
               {isLoading ? "Syncing..." : "Sync data"}
             </button>
           </div>
@@ -1542,89 +1498,35 @@ function App() {
                 </div>
               ) : (
                 <>
-                  <div className="metric-header">
-                    <span>{metric.label}</span>
-                    <strong>{metric.change}</strong>
-                  </div>
-                  <p className="metric-value">{metric.value}</p>
-                  <p className="metric-detail">{metric.detail}</p>
-                  <div className="metric-breakdown">
-                    {metric.breakdown.map((item) => (
-                      <span key={item}>{item}</span>
-                    ))}
-                  </div>
-                  <div className="metric-footer">
-                    <span>{metric.meta}</span>
-                    <span className="mini-chart" aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                  </div>
-                </>
-              )}
-            </article>
-          ))}
-        </section>
-
-        <section className="dashboard-grid">
-          {renderTrendPanel()}
-          {renderAiCard()}
-        </section>
-
-        <section className="dashboard-grid lower-grid">
-          {renderProductsPanel()}
-          <aside className="side-stack">
-            {renderLossMakers()}
-            <article className="panel quick-actions">
-              <p className="eyebrow">Shortcuts</p>
-              <h2>Quick actions</h2>
-              <div className="action-grid">
-                {quickActions.map((action) => (
-                  <button type="button" key={action}>{action}</button>
-                ))}
-              </div>
-            </article>
-          </aside>
-        </section>
-
-        <section className="activity-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Live updates</p>
-              <h2>Recent activity</h2>
-            </div>
-            <a href="#dashboard">View all</a>
-          </div>
-
-          <div className="activity-list">
-            {recentActivityFromData.map((activity) => (
-              <article className="activity-item" key={activity.title}>
-                <span className="activity-dot" />
-                <div>
-                  <h3>{activity.title}</h3>
-                  <p>{activity.detail}</p>
-                </div>
-                <time>{activity.time}</time>
-              </article>
-            ))}
-          </div>
-        </section>
-      </>
-    );
-  }
+	                  <div className="metric-header">
+	                    <span>{metric.label}</span>
+	                    <strong>{metric.change}</strong>
+	                  </div>
+	                  <p className="metric-value">{metric.value}</p>
+	                </>
+	              )}
+	            </article>
+	          ))}
+	        </section>
+	
+	        <section className="dashboard-focus-grid">
+	          {renderTrendPanel()}
+	          {renderAiCard()}
+	        </section>
+	      </>
+	    );
+	  }
 
   function renderAnalyticsPage() {
     return (
       <>
         <div className="date-filters analytics-filters" aria-label="Analytics date range filters">
-          {["Today", "This Week", "This Month", "All Time"].map((range) => (
+          {["Today", "This Week", "This Month"].map((range) => (
             <button
-              className={analyticsRange === range ? "active" : ""}
+              className={selectedRange === range ? "active" : ""}
               type="button"
               key={range}
-              onClick={() => setAnalyticsRange(range)}
+              onClick={() => setSelectedRange(range)}
             >
               {range}
             </button>
@@ -1632,62 +1534,35 @@ function App() {
         </div>
 
         <section className="metrics-grid">
-          {analyticsFromData.map((stat) => (
+          {dashboardMetrics.map((stat) => (
             <article className="simple-stat panel" key={stat.label}>
               <span>{stat.label}</span>
               <strong>{stat.value}</strong>
-              <p>{stat.detail}</p>
+              <p>{stat.change}</p>
             </article>
           ))}
         </section>
 
-        <section className="dashboard-grid analytics-grid">
-          <article className="panel shop-trend-panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">TikTok Shop rhythm</p>
-                <h2>Revenue trend and ad pressure</h2>
+        {!hasDashboardData && (
+          <article className="panel onboarding-empty">
+            <div className="empty-state">
+              <strong>Add your first product</strong>
+              <p>Analytics will appear after you save real product or expense data.</p>
+              <div className="empty-actions">
+                <button className="primary-action" type="button" onClick={openAddProductModal}>
+                  Add your first product
+                </button>
+                <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                  Import CSV
+                </button>
               </div>
-              <span className="panel-stat">{adSpendShare}% ad share</span>
-            </div>
-            <div className="shop-trend-chart" aria-label="Revenue trend over time">
-              {revenueTrend.map((point) => (
-                <div className="shop-trend-column" key={point.label}>
-                  <em>{formatCurrency(point.revenue)}</em>
-                  <div className="shop-trend-bars">
-                    <span className="revenue" style={{ height: `${point.revenueHeight}%` }} />
-                    <span className={point.isProfitDrop ? "profit drop" : "profit"} style={{ height: `${point.profitHeight}%` }} />
-                  </div>
-                  <small>{point.label}</small>
-                </div>
-              ))}
-            </div>
-            <div className="chart-footer">
-              <span>
-                {biggestProfitDrop
-                  ? `${biggestProfitDrop.event} created the sharpest profit dip despite revenue activity.`
-                  : "Revenue trend will become clearer as products are added."}
-              </span>
-              <button type="button">Review ads</button>
             </div>
           </article>
+        )}
 
-          <article className="panel payout-panel">
-            <p className="eyebrow">Settlement planning</p>
-            <h2>Payout timing estimate</h2>
-            <div className="payout-stack">
-              <div>
-                <span>Expected next payout</span>
-                <strong>{formatCurrency(estimatedNextPayout)}</strong>
-                <p>Estimated from current revenue less tracked expenses and ad pressure.</p>
-              </div>
-              <div>
-                <span>Timing reserve</span>
-                <strong>{formatCurrency(payoutReserve)}</strong>
-                <p>Keep this aside for refunds, fees, delayed settlement, and shipping variance.</p>
-              </div>
-            </div>
-          </article>
+        <section className="dashboard-focus-grid analytics-grid">
+          {renderTrendPanel()}
+          {renderAiCard()}
         </section>
 
         <section className="dashboard-grid analytics-grid">
@@ -1697,7 +1572,7 @@ function App() {
                 <p className="eyebrow">Profit breakdown</p>
                 <h2>Where profit is going</h2>
               </div>
-              <span className="panel-stat">{analyticsRange}</span>
+              <span className="panel-stat">{selectedRange}</span>
             </div>
             <div className="profit-breakdown">
               <div>
@@ -1717,23 +1592,7 @@ function App() {
             </div>
           </article>
 
-          <article className="panel revenue-expense-panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Cash view</p>
-                <h2>Revenue vs expenses</h2>
-              </div>
-            </div>
-            <div className="revenue-expense-chart" aria-label="Revenue versus expenses chart">
-              {revenueExpenseBars.map((bar) => (
-                <div className="revenue-expense-bar" key={bar.label}>
-                  <em>{formatCurrency(bar.value)}</em>
-                  <span className={bar.tone} style={{ height: `${bar.height}%` }} />
-                  <small>{bar.label}</small>
-                </div>
-              ))}
-            </div>
-          </article>
+          {renderLossMakers()}
         </section>
 
         <section className="dashboard-grid lower-grid">
@@ -1764,7 +1623,15 @@ function App() {
               ) : (
                 <div className="empty-state">
                   <strong>No products yet</strong>
-                  <p>Add products to build profitability rankings.</p>
+                  <p>Add your first product to build profitability rankings.</p>
+                  <div className="empty-actions">
+                    <button className="primary-action" type="button" onClick={openAddProductModal}>
+                      Add your first product
+                    </button>
+                    <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                      Import CSV
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1804,29 +1671,30 @@ function App() {
           </aside>
         </section>
 
-        <section className="dashboard-grid">
-          {renderTrendPanel()}
-          <article className="panel ai-card">
-            <div className="ai-header">
-              <p className="eyebrow">Seller operations</p>
-              <span>{analyticsRange}</span>
-            </div>
-            <h2>Operational readout</h2>
-            <p>
-              {seasonalSignal} Current true net profit is {formatCurrency(totalTrueNetProfit)} after tracked expenses.
-            </p>
-            <ul className="ai-actions">
-              {[...operationalWarnings, ...sellerInsights].slice(0, 5).map((insight) => (
-                <li key={insight}>{insight}</li>
-              ))}
-            </ul>
-          </article>
-        </section>
       </>
     );
   }
 
   function renderLossAnalysisPage() {
+    if (productSummaries.length === 0) {
+      return (
+        <article className="panel onboarding-empty">
+          <div className="empty-state">
+            <strong>Add your first product</strong>
+            <p>Loss analysis will appear after you save real product data.</p>
+            <div className="empty-actions">
+              <button className="primary-action" type="button" onClick={openAddProductModal}>
+                Add your first product
+              </button>
+              <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                Import CSV
+              </button>
+            </div>
+          </div>
+        </article>
+      );
+    }
+
     const summaryCards = [
       {
         label: "Losing money",
@@ -1940,8 +1808,8 @@ function App() {
             ))
           ) : (
             <div className="empty-state compact-empty">
-              <strong>No issues found</strong>
-              <p>This group is clear based on the products currently saved.</p>
+              <strong>No products in this group</strong>
+              <p>No saved products currently match this risk condition.</p>
             </div>
           )}
         </div>
@@ -1954,92 +1822,40 @@ function App() {
       <article className="panel chart-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Profit movement</p>
-            <h2>Daily net profit</h2>
+            <p className="eyebrow">{selectedRange}</p>
+            <h2>Net profit over time</h2>
           </div>
           <div className="chart-meta">
-            <span className="panel-stat">{formatCurrency(productTrueProfit)}</span>
-            <span>{bestProduct ? `Best: ${bestProduct.name}` : "No product data"}</span>
+            <span className="panel-stat">{formatCurrency(totalTrueNetProfit)}</span>
           </div>
         </div>
 
-        <div className={`trend-chart ${isLoading ? "is-loading" : ""}`} aria-label="Profit trend chart placeholder">
-          {productProfitTrend.length > 0 ? (
-            productProfitTrend.map((point) => (
-              <div className="trend-bar" key={point.day}>
-                <em>{point.profit}</em>
-                <span className={point.isLoss ? "loss-bar" : ""} style={{ height: `${point.height}%` }} />
-                <small>{point.day}</small>
+        <div className={`trend-chart ${isLoading ? "is-loading" : ""}`} aria-label="Net profit over time chart">
+          {hasDashboardData ? (
+            revenueTrend.map((point) => (
+              <div className="trend-bar" key={point.label}>
+                <em>{formatCurrency(point.profit)}</em>
+                <span className={point.isProfitDrop ? "loss-bar" : ""} style={{ height: `${point.profitHeight}%` }} />
+                <small>{point.label}</small>
               </div>
             ))
           ) : (
             <div className="empty-state chart-empty">
-              <strong>No product data</strong>
-              <p>Add products to build the profit chart.</p>
+              <strong>No dashboard data</strong>
+              <p>Add your first product to build the chart from real data.</p>
+              <div className="empty-actions">
+                <button className="primary-action" type="button" onClick={openAddProductModal}>
+                  Add your first product
+                </button>
+                <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                  Import CSV
+                </button>
+              </div>
             </div>
           )}
         </div>
         <div className="chart-footer">
-          <span>Product true profit from stored product data, after product costs, shipping, and ad spend.</span>
-          <button type="button">View analytics</button>
-        </div>
-      </article>
-    );
-  }
-
-  function renderProductsPanel(fullWidth = false) {
-    return (
-      <article className={`panel products-panel ${fullWidth ? "full-panel" : ""}`}>
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Best performers</p>
-            <h2>Top products</h2>
-          </div>
-          <label className="search-field">
-            <span>Search products</span>
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search products"
-            />
-          </label>
-        </div>
-
-        <div className="product-table" role="table" aria-label="Top products">
-          <div className="table-row table-head" role="row">
-            <span role="columnheader">Product</span>
-            <span role="columnheader">Revenue</span>
-            <span role="columnheader">Profit</span>
-            <span role="columnheader">Margin</span>
-          </div>
-          {isLoading ? (
-            [1, 2, 3].map((row) => (
-              <div className="table-row skeleton-row" role="row" key={row}>
-                <span className="skeleton-line" />
-                <span className="skeleton-line" />
-                <span className="skeleton-line" />
-                <span className="skeleton-line" />
-              </div>
-            ))
-          ) : dashboardTopProducts.length > 0 ? (
-            dashboardTopProducts.map((product) => (
-              <div className="table-row" role="row" key={product.id}>
-                <strong role="cell">
-                  {product.name}
-                  <span>{product.unitsSold} units · {formatCurrency(product.unitProfitValue)} / unit</span>
-                </strong>
-                <span role="cell">{formatCurrency(product.revenueValue)}</span>
-                <span role="cell">{formatCurrency(product.trueProfitValue)}</span>
-                <span role="cell">{product.marginValue}%</span>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state">
-              <strong>No products found</strong>
-              <p>Try a different search or clear the product filter.</p>
-            </div>
-          )}
+          <span>Based on stored products and expenses in {rangeLabel}.</span>
         </div>
       </article>
     );
@@ -2646,6 +2462,27 @@ function App() {
   }
 
   function renderLossMakers() {
+    if (productSummaries.length === 0) {
+      return (
+        <article className="panel loss-panel">
+          <p className="eyebrow">Needs attention</p>
+          <h2>Products Losing Money</h2>
+          <div className="empty-state">
+            <strong>No product data</strong>
+            <p>Add your first product to monitor losses.</p>
+            <div className="empty-actions">
+              <button className="primary-action" type="button" onClick={openAddProductModal}>
+                Add your first product
+              </button>
+              <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                Import CSV
+              </button>
+            </div>
+          </div>
+        </article>
+      );
+    }
+
     return (
       <article className="panel loss-panel">
         <p className="eyebrow">Needs attention</p>
@@ -2676,23 +2513,49 @@ function App() {
   }
 
   function renderAiCard() {
+    if (!hasDashboardData) {
+      return (
+        <article className="panel ai-card">
+          <div className="ai-header">
+            <p className="eyebrow">AI Alerts</p>
+            <span>{selectedRange}</span>
+          </div>
+          <h2>No alerts</h2>
+          <div className="empty-state compact-empty">
+            <strong>No data in this timeframe</strong>
+            <p>Add your first product or import a CSV to monitor profit risks.</p>
+            <div className="empty-actions">
+              <button className="primary-action" type="button" onClick={openAddProductModal}>
+                Add your first product
+              </button>
+              <button className="secondary-action" type="button" onClick={openCsvFilePicker}>
+                Import CSV
+              </button>
+            </div>
+          </div>
+        </article>
+      );
+    }
+
     return (
       <article className="panel ai-card">
         <div className="ai-header">
-          <p className="eyebrow">AI insight</p>
-          <span>Priority</span>
+          <p className="eyebrow">AI Alerts</p>
+          <span>{selectedRange}</span>
         </div>
-        <h2>Protect margin before scaling ads</h2>
-        <p>
-          True net profit is {formatCurrency(totalTrueNetProfit)} after {formatCurrency(totalMonthlyExpenses)} in tracked expenses.
-          Ads are {adSpendShare}% of revenue and shipping is {shippingShare}%.
-        </p>
-        <ul className="ai-actions">
-          <li>{bestProduct ? `${bestProduct.name} is strongest at ${formatCurrency(bestProduct.trueProfitValue)} true profit and ${bestProduct.marginValue}% margin.` : "Add products to find the SKU carrying profit."}</li>
-          <li>{worstProduct ? `${worstProduct.name} needs review: ${formatCurrency(worstProduct.unitProfitValue)} unit profit, ${worstProduct.adSpendRatioValue}% ad share.` : "No weak product signal yet."}</li>
-          <li>{productsLosingMoney.length > 0 ? `Review ${productsLosingMoney.length} losing product${productsLosingMoney.length === 1 ? "" : "s"} before increasing spend.` : "No stored products are currently below zero true profit."}</li>
-          <li>Estimated next payout: {formatCurrency(estimatedNextPayout)} after reserve for fees, refunds, and timing differences.</li>
-        </ul>
+        <h2>{dashboardAlerts.length > 0 ? "Needs attention" : "No alerts"}</h2>
+        {dashboardAlerts.length > 0 ? (
+          <ul className="ai-actions">
+            {dashboardAlerts.map((alert) => (
+              <li key={alert}>{alert}</li>
+            ))}
+          </ul>
+        ) : (
+          <div className="empty-state compact-empty">
+            <strong>No alerts</strong>
+            <p>No saved products or expenses crossed the current alert thresholds.</p>
+          </div>
+        )}
       </article>
     );
   }
@@ -2727,17 +2590,6 @@ function PageFrame({ eyebrow, title, actions, children }) {
       </header>
       {children}
     </>
-  );
-}
-
-function Notifications() {
-  return (
-    <div className="notifications-panel" aria-label="Notifications">
-      <strong>Notifications</strong>
-      {notifications.map((notification) => (
-        <span key={notification}>{notification}</span>
-      ))}
-    </div>
   );
 }
 

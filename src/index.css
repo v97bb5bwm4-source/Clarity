@@ -524,7 +524,7 @@ a {
 .dashboard-content {
   width: min(1180px, 100%);
   margin: 0 auto;
-  padding: 20px;
+  padding: 18px;
 }
 
 .page-topbar {
@@ -536,7 +536,7 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .topbar-actions {
@@ -609,14 +609,14 @@ p {
 h1 {
   max-width: 680px;
   color: #f8fafc;
-  font-size: 26px;
+  font-size: 24px;
   line-height: 1.12;
   font-weight: 750;
 }
 
 h2 {
   color: #f8fafc;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.2;
 }
 
@@ -711,9 +711,9 @@ h2 {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .panel,
@@ -729,7 +729,7 @@ h2 {
 }
 
 .panel {
-  padding: 14px;
+  padding: 13px;
   min-height: 100%;
 }
 
@@ -751,15 +751,22 @@ h2 {
   margin-bottom: 12px;
 }
 
+.dashboard-focus-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.62fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .lower-grid {
   grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.8fr);
 }
 
 .metric-card {
   position: relative;
-  min-height: 148px;
+  min-height: 104px;
   overflow: hidden;
-  padding: 14px;
+  padding: 13px;
   border: 1px solid rgba(226, 232, 240, 0.14);
   border-radius: 8px;
   background:
@@ -786,28 +793,14 @@ h2 {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background:
-    radial-gradient(circle at 82% 18%, rgba(45, 212, 191, 0.2), transparent 8rem),
-    linear-gradient(90deg, rgba(45, 212, 191, 0.9), rgba(129, 140, 248, 0.75));
+  background: linear-gradient(90deg, rgba(45, 212, 191, 0.9), rgba(129, 140, 248, 0.75));
   content: "";
   opacity: 0.62;
   mask: linear-gradient(#000 0 0) top / 100% 3px no-repeat;
 }
 
-.metric-card::after {
-  position: absolute;
-  top: -80px;
-  right: -70px;
-  width: 170px;
-  height: 170px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  content: "";
-}
-
 .metric-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   border-color: rgba(45, 212, 191, 0.34);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
@@ -815,9 +808,7 @@ h2 {
 }
 
 .metric-card.neutral::before {
-  background:
-    radial-gradient(circle at 82% 18%, rgba(129, 140, 248, 0.18), transparent 8rem),
-    linear-gradient(90deg, rgba(129, 140, 248, 0.9), rgba(56, 189, 248, 0.68));
+  background: linear-gradient(90deg, rgba(129, 140, 248, 0.9), rgba(56, 189, 248, 0.68));
 }
 
 .metric-header {
@@ -826,7 +817,7 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   color: #b6c2d2;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -848,9 +839,9 @@ h2 {
 }
 
 .metric-value {
-  margin-top: 13px;
+  margin-top: 11px;
   color: #f8fafc;
-  font-size: 23px;
+  font-size: 21px;
   line-height: 1;
   font-weight: 820;
   letter-spacing: 0;
@@ -1078,8 +1069,8 @@ h2 {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   align-items: end;
-  gap: 8px;
-  height: 170px;
+  gap: 7px;
+  height: 230px;
   padding: 12px 12px 9px;
   border: 1px solid rgba(148, 163, 184, 0.1);
   border-radius: 8px;
@@ -1125,7 +1116,7 @@ h2 {
   position: relative;
   display: block;
   width: 100%;
-  min-height: 28px;
+  min-height: 0;
   border-radius: 8px 8px 3px 3px;
   background: linear-gradient(180deg, #5eead4, #14b8a6 58%, #0f766e);
   box-shadow: 0 12px 24px rgba(20, 184, 166, 0.16);
@@ -1182,7 +1173,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 10px;
+  margin-top: 8px;
   color: #8d98a9;
   font-size: 12px;
 }
@@ -1515,20 +1506,7 @@ h2 {
 .ai-card {
   position: relative;
   overflow: hidden;
-  background:
-    linear-gradient(145deg, rgba(45, 212, 191, 0.12), rgba(129, 140, 248, 0.08)),
-    rgba(15, 23, 42, 0.78);
-}
-
-.ai-card::after {
-  position: absolute;
-  right: -44px;
-  bottom: -54px;
-  width: 150px;
-  height: 150px;
-  border-radius: 999px;
-  background: rgba(45, 212, 191, 0.1);
-  content: "";
+  background: rgba(15, 23, 42, 0.78);
 }
 
 .ai-header {
@@ -1549,7 +1527,7 @@ h2 {
 }
 
 .ai-card h2 {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .ai-card p {
@@ -1564,14 +1542,14 @@ h2 {
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 8px;
-  margin: 12px 0 0;
+  gap: 7px;
+  margin: 10px 0 0;
   padding: 0;
   list-style: none;
 }
 
 .ai-actions li {
-  padding: 9px 10px;
+  padding: 8px 9px;
   border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 8px;
   color: #dbe5f0;
@@ -1889,6 +1867,14 @@ h2 {
   display: block;
   margin-bottom: 6px;
   color: #f8fafc;
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .side-stack {
@@ -2900,10 +2886,6 @@ h2 {
     width: 100%;
   }
 
-  .notifications-panel {
-    width: 100%;
-  }
-
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -2936,6 +2918,7 @@ h2 {
   }
 
   .dashboard-grid,
+  .dashboard-focus-grid,
   .lower-grid,
   .expense-summary-grid,
   .settings-grid,
@@ -2982,7 +2965,7 @@ h2 {
   }
 
   .metric-card {
-    min-height: 146px;
+    min-height: 96px;
   }
 
   .nav-list {
@@ -2999,7 +2982,7 @@ h2 {
 
   .trend-chart {
     gap: 6px;
-    height: 155px;
+    height: 180px;
     padding-inline: 8px;
   }
 
